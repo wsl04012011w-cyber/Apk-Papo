@@ -22,6 +22,8 @@ import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
@@ -49,6 +51,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
+    private lateinit var audioPermissionLauncher: ActivityResultLauncher<String>
     private val credentialManager by lazy { CredentialManager.create(this) }
     private var pendingMediaPermissionRequest: PermissionRequest? = null
     private var nativeGoogleSignInInProgress = false
@@ -56,6 +59,10 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        audioPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            completePendingMediaPermission(granted)
+        }
 
         window.statusBarColor = Color.WHITE
         window.navigationBarColor = Color.WHITE
@@ -172,10 +179,7 @@ class MainActivity : ComponentActivity() {
                         request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
                     } else {
                         pendingMediaPermissionRequest = request
-                        requestPermissions(
-                            arrayOf(Manifest.permission.RECORD_AUDIO),
-                            REQUEST_RECORD_AUDIO
-                        )
+                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
                 }
             }
@@ -303,14 +307,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQUEST_RECORD_AUDIO) return
-
+    private fun completePendingMediaPermission(granted: Boolean) {
         val pendingRequest = pendingMediaPermissionRequest
         pendingMediaPermissionRequest = null
         if (pendingRequest == null) return
@@ -319,14 +316,16 @@ class MainActivity : ComponentActivity() {
         val validRequest = isTrustedWebsite(pendingRequest.origin) &&
             resources.isNotEmpty() &&
             resources.all { it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }
-        val granted = grantResults.isNotEmpty() &&
-            grantResults[0] == PackageManager.PERMISSION_GRANTED
 
         if (validRequest && granted) {
             pendingRequest.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
         } else {
             pendingRequest.deny()
-            Toast.makeText(this, "Permita o microfone para fazer chamadas de voz.", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                "Permita o microfone para fazer chamadas de voz.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
