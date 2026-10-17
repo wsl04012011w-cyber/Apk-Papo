@@ -31,7 +31,8 @@ APK gerado em `app/build/outputs/apk/debug/app-debug.apk`.
 ## Limites conhecidos desta etapa
 
 - O app carrega o site publicado; mudanças no frontend continuam sendo publicadas pelo fluxo web/Vercel já existente.
-- O login Google baseado em `signInWithPopup` pode não funcionar corretamente dentro de WebView. A integração de autenticação precisa ser tratada numa etapa própria; não se deve contornar a proteção do Google OAuth em WebView incorporada.
+- O login Google no Android usa o Credential Manager do sistema e entrega o ID token ao Firebase Web da página somente pela ponte de mensagens restrita à origem confiável. No navegador normal, o login continua usando `signInWithPopup`.
+- Para que o login nativo funcione em um dispositivo real, é necessária configuração única no Firebase/Google Cloud: cadastrar o app Android com o package `com.papo.app.debug` e a impressão SHA-1 do certificado que assina o APK de teste, confirmar o provedor Google habilitado e verificar o OAuth Web Client ID. O código deste repositório não consegue registrar esses valores no Console do Firebase automaticamente.
 - Notificações de chamadas com o app fechado, FCM, serviços em segundo plano e integração nativa de chamadas ainda não foram implementados.
 - Este é um APK de depuração para testes, não uma versão de produção assinada.
 
