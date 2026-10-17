@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">Papo</string>
     <string name="loading">Carregando Papo…</string>
+    <string name="default_web_client_id" translatable="false">422230878101-3ee62mfuu29mg0g4t331amep9l18d72p.apps.googleusercontent.com</string>
 </resources>
