@@ -10,8 +10,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.PermissionRequest
-import android.webkit.SafeBrowsingResponse
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -21,20 +21,37 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.Toast
-import android.app.Activity
-import android.view.ViewGroup
+import androidx.activity.ComponentActivity
+import androidx.lifecycle.lifecycleScope
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.webkit.JavaScriptReplyProxy
+import androidx.webkit.WebMessageCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
 
     companion object {
         private const val WEBSITE_URL = "https://hjhjh-ruby.vercel.app/"
         private const val WEBSITE_HOST = "hjhjh-ruby.vercel.app"
         private const val REQUEST_RECORD_AUDIO = 701
+        private const val NATIVE_AUTH_OBJECT = "papoNativeAuth"
+        private const val GOOGLE_SIGN_IN_MESSAGE = "googleSignIn"
+        private const val GOOGLE_TOKEN_EVENT = "papo-native-google-id-token"
+        private const val GOOGLE_ERROR_EVENT = "papo-native-google-auth-error"
     }
 
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
+    private val credentialManager by lazy { CredentialManager.create(this) }
     private var pendingMediaPermissionRequest: PermissionRequest? = null
+    private var nativeGoogleSignInInProgress = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,6 +100,8 @@ class MainActivity : Activity() {
         }
 
         webView.setBackgroundColor(Color.WHITE)
+        configureNativeAuthBridge()
+
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
@@ -175,6 +194,98 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * Exposes one narrowly scoped message listener to the trusted top-level Papo origin.
+     * Unlike addJavascriptInterface, WebMessageListener lets us validate both origin and frame.
+     */
+    private fun configureNativeAuthBridge() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            Toast.makeText(
+                this,
+                "Atualize o Android System WebView para habilitar o login Google nativo.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        WebViewCompat.addWebMessageListener(
+            webView,
+            NATIVE_AUTH_OBJECT,
+            setOf("https://$WEBSITE_HOST"),
+            object : WebViewCompat.WebMessageListener {
+                override fun onPostMessage(
+                    view: WebView,
+                    message: WebMessageCompat,
+                    sourceOrigin: Uri,
+                    isMainFrame: Boolean,
+                    replyProxy: JavaScriptReplyProxy
+                ) {
+                    if (!isMainFrame || !isTrustedWebsite(sourceOrigin)) return
+                    if (message.data == GOOGLE_SIGN_IN_MESSAGE) {
+                        runOnUiThread { startNativeGoogleSignIn() }
+                    }
+                }
+            }
+        )
+    }
+
+    private fun startNativeGoogleSignIn() {
+        if (nativeGoogleSignInInProgress) return
+        nativeGoogleSignInInProgress = true
+
+        lifecycleScope.launch {
+            try {
+                val googleIdOption = GetGoogleIdOption.Builder()
+                    .setServerClientId(getString(com.papo.app.R.string.default_web_client_id))
+                    .setFilterByAuthorizedAccounts(false)
+                    .setAutoSelectEnabled(false)
+                    .build()
+
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(googleIdOption)
+                    .build()
+
+                val result = credentialManager.getCredential(
+                    context = this@MainActivity,
+                    request = request
+                )
+                val credential = result.credential
+
+                if (credential is CustomCredential &&
+                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                ) {
+                    val googleCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                    val detail = JSONObject().put("idToken", googleCredential.idToken)
+                    dispatchNativeAuthEvent(GOOGLE_TOKEN_EVENT, detail)
+                } else {
+                    dispatchNativeAuthError("O Google não retornou uma credencial compatível.")
+                }
+            } catch (error: Exception) {
+                // Do not expose tokens or internal exception details to the page.
+                val canceled = error.javaClass.simpleName.contains("Cancellation", ignoreCase = true)
+                dispatchNativeAuthError(
+                    if (canceled) "Login cancelado."
+                    else "Não foi possível concluir o login com Google. Verifique a configuração OAuth do app e tente novamente."
+                )
+            } finally {
+                nativeGoogleSignInInProgress = false
+            }
+        }
+    }
+
+    private fun dispatchNativeAuthError(message: String) {
+        dispatchNativeAuthEvent(GOOGLE_ERROR_EVENT, JSONObject().put("message", message))
+    }
+
+    private fun dispatchNativeAuthEvent(eventName: String, detail: JSONObject) {
+        val script = "window.dispatchEvent(new CustomEvent(${JSONObject.quote(eventName)}, {detail: $detail}));"
+        webView.post {
+            if (!isFinishing && !isDestroyed) {
+                webView.evaluateJavascript(script, null)
+            }
+        }
+    }
+
     private fun isTrustedWebsite(uri: Uri): Boolean {
         return uri.scheme.equals("https", ignoreCase = true) &&
             uri.host.equals(WEBSITE_HOST, ignoreCase = true)
@@ -224,7 +335,7 @@ class MainActivity : Activity() {
         super.onSaveInstanceState(outState)
     }
 
-    @Deprecated("Deprecated in Android API")
+    @Deprecated("Android compatibility")
     override fun onBackPressed() {
         if (::webView.isInitialized && webView.canGoBack()) {
             webView.goBack()
